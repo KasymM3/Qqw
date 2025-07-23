@@ -1,0 +1,123 @@
+local players = game:GetService("Players")
+local runService = game:GetService("RunService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+
+local localPlayer = players.LocalPlayer
+local lastParryTime = 0
+local cd = 0.1
+local distance = 10
+local angle = 90
+
+local playerPositions = {}
+
+local function getCharacterData(player)
+    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        local rootPart = player.Character.HumanoidRootPart
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        
+        return {
+            position = rootPart.Position,
+            moveVector = humanoid and humanoid.MoveDirection or Vector3.new(0, 0, 0)
+        }
+    end
+    return nil
+end
+
+local function getAngleBetweenVectors(vec1, vec2)
+    local dot = vec1:Dot(vec2)
+    local mag1 = vec1.Magnitude
+    local mag2 = vec2.Magnitude
+    
+    if mag1 == 0 or mag2 == 0 then 
+        return 180 
+    end
+    
+    local cosAngle = dot / (mag1 * mag2)
+    cosAngle = math.max(-1, math.min(1, cosAngle))
+    
+    return math.deg(math.acos(cosAngle))
+end
+
+local function getDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+local function fireParry()
+    local currentTime = tick()
+    if currentTime - lastParryTime >= cd then
+        local args = {}
+        replicatedStorage:WaitForChild("event", 9e9):WaitForChild("combat", 9e9):WaitForChild("parry", 9e9):FireServer(unpack(args))
+        lastParryTime = currentTime
+    end
+end
+
+local function checkNearbyPlayers()
+    local localData = getCharacterData(localPlayer)
+    if not localData then 
+        return 
+    end
+    
+    local localPos = localData.position
+    
+    for _, player in pairs(players:GetPlayers()) do
+        if player ~= localPlayer then
+            local playerData = getCharacterData(player)
+            if playerData then
+                local playerPos = playerData.position
+                local dist = getDistance(localPos, playerPos)
+                
+                if dist <= distance and dist > 3 then
+                    local currentTime = tick()
+                    local playerKey = player.Name
+                    
+                    if not playerPositions[playerKey] then
+                        playerPositions[playerKey] = {
+                            lastPosition = playerPos,
+                            lastTime = currentTime
+                        }
+                    else
+                        local lastData = playerPositions[playerKey]
+                        local timeDelta = currentTime - lastData.lastTime
+                        
+                        if timeDelta > 0.1 then
+                            local movementVector = playerPos - lastData.lastPosition
+                            
+                            if movementVector.Magnitude > 0.1 then
+                                local directionToUs = (localPos - playerPos).Unit
+                                local playerMovement = movementVector.Unit
+                                local moveAngle = getAngleBetweenVectors(playerMovement, directionToUs)
+                                
+                                if moveAngle <= angle then
+                                    fireParry()
+                                end
+                            end
+                            
+                            if playerData.moveVector.Magnitude > 0.1 then
+                                local directionToUs = (localPos - playerPos).Unit
+                                local humanoidAngle = getAngleBetweenVectors(playerData.moveVector, directionToUs)
+                                if humanoidAngle <= angle then
+                                    fireParry()
+                                end
+                            end
+                            
+                            playerPositions[playerKey].lastPosition = playerPos
+                            playerPositions[playerKey].lastTime = currentTime
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+runService.RenderStepped:Connect(checkNearbyPlayers)
+
+players.PlayerRemoving:Connect(function(player)
+    playerPositions[player.Name] = nil
+end)
+
+players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function(character)
+        playerPositions[player.Name] = nil
+    end)
+end)
